@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Death Chamber · Bounce study</title>
+<style>
+*{box-sizing:border-box}body{margin:0;overflow:hidden;background:#101b17;color:#e8eedc;font-family:Consolas,monospace}canvas{display:block;width:100vw;height:100dvh;touch-action:none}header{position:absolute;top:24px;left:25px;right:25px;display:flex;justify-content:space-between;align-items:center;gap:15px}h1{font-size:17px;letter-spacing:3px;margin:0}small{display:block;font-size:10px;color:#8ea18f;letter-spacing:2px;margin-top:8px}button{white-space:nowrap;flex-shrink:0;background:#24372b;color:#e8eedc;border:1px solid #637a60;padding:10px;cursor:pointer}aside{position:absolute;top:100px;left:25px;font-size:12px;color:#9eaf98}strong{font-size:24px;font-weight:normal;color:#e8eedc}#feedback{position:absolute;top:25%;width:100%;text-align:center;color:#bde68a;font-size:15px;pointer-events:none}footer{position:absolute;bottom:22px;left:25px;right:25px;display:flex;justify-content:space-between;align-items:end;gap:15px;pointer-events:none}#phase{font-size:11px;letter-spacing:2px}.track{height:5px;width:180px;background:#304432;margin-top:10px}#meter{height:100%;background:#bde68a;width:0}p{font-size:12px;line-height:1.8;text-align:right;margin:0;color:#bdcbb4}p span{font-size:10px;color:#8ea18f}@media(max-width:600px){h1{font-size:13px}footer{display:block}.track{width:140px;margin-bottom:14px}p{text-align:left;font-size:11px}#feedback{top:29%;font-size:12px}}
+.health-panel{position:absolute;top:145px;left:25px;width:210px;font-size:11px;color:#bdcbb4;pointer-events:none}.health-label{display:flex;justify-content:space-between;align-items:center}.health-label strong{font-size:15px}.health-track{height:9px;background:#3b3028;border:1px solid #627453;margin:7px 0}.health-track div{height:100%;width:0%;background:#bde68a;transition:width .15s,background .15s}#pain{font-size:10px;color:#b2a291}
+#room{font-size:24px;font-weight:bold;letter-spacing:2px;color:#e8eedc;margin-top:5px}@media(max-width:600px){#room{font-size:20px}}
+.controls{display:flex;gap:8px;align-items:center}#sound{font-size:11px;padding:8px}@media(max-width:600px){.controls{flex-direction:column;align-items:stretch;gap:5px}.controls button{padding:6px 9px}}
+.round-hud{display:flex;gap:28px;font-size:10px;letter-spacing:1px}.round-hud strong{display:block;margin-top:4px;font-size:26px}.round-results[hidden]{display:none}.round-results{position:fixed;inset:0;z-index:10;display:grid;place-items:center;background:rgba(8,17,12,.88)}.round-results>div{text-align:center;padding:30px;border:1px solid #eff4e9;border-radius:8px;background:#18281d;max-width:90vw}.round-results h2{font-size:30px;color:#f0d38b}.round-results p{text-align:center;font-size:16px;margin:20px 0}.round-results strong{font-size:36px}.round-results button{font-size:17px;padding:12px 24px}.round-results small{letter-spacing:0;margin-top:20px}
+.round-results .best-result{font-size:14px;margin:8px 0}.round-results .record-note{font-size:13px;color:#f0d38b;margin:12px 0 22px;letter-spacing:1px}
+</style>
+<canvas id="game" aria-label="Trampoline game. Move the mouse to steer rotation and click to jump. On touchscreens, one finger steers and a second finger taps to jump. Space also jumps."></canvas>
+<header><div><h1>DEATH CHAMBER</h1><small id="room">ROOM 01</small></div><div class="controls"><button id="reset">Restart · R</button><button id="sound" aria-label="Mute sound" aria-pressed="false">Sound: on</button></div></header>
+<aside class="round-hud"><div>TIME LEFT<strong id="clock">1:30</strong></div><div>ROOMS<strong id="score">0</strong></div><div>BEST<strong id="bestScore">0</strong></div></aside><span hidden><span id="height"></span><span id="best"></span></span>
+<div class="health-panel"><div class="health-label"><span>PAIN</span><strong id="health">0%</strong></div><div class="health-track" id="healthBar" role="progressbar" aria-label="Pain level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="healthFill"></div></div><span id="pain">Feeling fine</span></div>
+<div id="feedback" role="status">Find the rhythm.</div>
+<footer><div><div id="phase">FALLING</div><div class="track"><div id="meter"></div></div></div><p>Steer left/right of center. <b>Click or second-finger tap</b> to jump.<br><span>Mouse: move to steer, click to jump · Touch: one finger steers, second finger jumps · R restarts</span></p></footer>
+<section id="roundResults" class="round-results" role="dialog" aria-modal="true" aria-labelledby="roundTitle" hidden><div><h2 id="roundTitle">Time's up!</h2><p>You entered <strong id="finalScore">0</strong> new rooms.</p><p class="best-result">Personal best: <span id="finalBest">0</span> rooms</p><p id="recordNote" class="record-note"></p><button id="playAgain">Play again</button><small>90 seconds. How far can you get?</small></div></section>
+<script src="sound.js"></script><script src="game.js"></script></html>
+
+
+
+
+
+
+
+
+
