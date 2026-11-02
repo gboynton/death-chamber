@@ -2,13 +2,13 @@
 // Fixed-step spring physics. World pixels are independent of screen size.
 const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
 const ui=Object.fromEntries(['height','best','feedback','phase','meter','health','healthFill','healthBar','pain','room','clock','score','roundResults','finalScore','bestScore','finalBest','recordNote'].map(id=>[id,document.getElementById(id)]));
-const P={headRadius:17,bloodPainThreshold:8,vomitSpinThreshold:3.1,vomitSpinDelay:.5,upperArmLength:32,forearmLength:32,gravity:1500,spring:115,damping:0.8,minLaunch:240,pump:650,timingTolerance:1200,recoveryRate:Math.LN2/2,recoveryDelay:1,painThreshold:220,damageRamp:250,pointerRotationSpeed:4,painSpinAcceleration:70,spinDamping:0.22,leanKick:180,step:1/240},surface=590;
+const P={headRadius:17,bloodPainThreshold:8,vomitSpinThreshold:3.1,vomitSpinDelay:.5,upperArmLength:24,forearmLength:28,gravity:1500,spring:115,damping:0.8,minLaunch:240,pump:650,timingTolerance:1200,recoveryRate:Math.LN2/2,recoveryDelay:1,painThreshold:220,damageRamp:250,pointerRotationSpeed:4,painSpinAcceleration:70,spinDamping:0.22,uprightTorque:2.4,uprightDamping:2,uprightMaxSpeed:1.2,leanKick:324,restFriction:6,restSpeed:55,restDelay:.18,ceilingExitMargin:18,step:1/240},surface=590;
 let y,velocity,best,bounceHeight,pumped,squish,lastPump,feedbackTime;
 let width=1,height=1,scale=1,ox=0,oy=0,previous=0,accumulator=0;
 let bodyAngle=0,armAngle=0,angularSpeed=0,gesture=null;
-const touchPointers=new Map();
-let steeringTouchId=null;
+let activePointerId=null;
 let horizontalPosition=450,horizontalSpeed=0,facing=1;
+let uprightSpinSpeed=0;
 let painSpinSpeed=0,painTorque=0,painTorqueTarget=0,painNoiseTimer=0;
 let roomNumber=1,opening=null;
 const ROUND_DURATION_MS=90000;
@@ -16,18 +16,18 @@ const BEST_SCORE_KEY='death-chamber-best-90-second-score-v1';
 let bestScore=readBestScore(),victoryUntil=-1;
 let roundDeadline=null,roundOver=false,remainingMs=ROUND_DURATION_MS,roomTransition=null,ending=null;
 let bounceSoundArmed=false,bounceAirTime=0;
-let trampolineContact=false;
+let trampolineContact=false,restingTime=0;
 let headOnBed=false;
 let animation;
 let bloodParticles=[];
 let wallDrips=[],floorFluids={blood:new Float32Array(82),vomit:new Float32Array(82)};
 let nauseaTime=0,vomitAccumulator=0,vomiting=false,vomitParticles=[],vomitSeed=937;
 let health=100,hitFlash=0,simulationTime=0,lastDamageTime=-10,lastHits={};
-function reset(){ending=null;victoryUntil=-1;roundDeadline=null;roundOver=false;remainingMs=ROUND_DURATION_MS;roomTransition=null;ui.roundResults.hidden=true;ui.clock.textContent='1:30';ui.score.textContent='0';resetRoomFluids();bloodParticles=[];resetVomit();resetAnimation();touchPointers.clear();steeringTouchId=null;roomNumber=1;opening=createOpening(roomNumber);trampolineContact=false;bounceSoundArmed=false;bounceAirTime=0;headOnBed=false;painSpinSpeed=0;painTorque=0;painTorqueTarget=0;painNoiseTimer=0;health=100;hitFlash=0;simulationTime=0;lastDamageTime=-10;lastHits={};horizontalPosition=450;horizontalSpeed=0;facing=1;bodyAngle=0;armAngle=0;angularSpeed=0;gesture=null;y=surface-180;velocity=0;best=180;bounceHeight=180;pumped=false;squish=0;lastPump=-10;feedbackTime=2;ui.feedback.textContent='Move or tap to start your 90-second escape.';}
-// Each room shrinks the opening by 10%; wall doors retain their extra height.
+function reset(){ending=null;victoryUntil=-1;roundDeadline=null;roundOver=false;remainingMs=ROUND_DURATION_MS;roomTransition=null;ui.roundResults.hidden=true;ui.clock.textContent='1:30';ui.score.textContent='0';resetRoomFluids();bloodParticles=[];resetVomit();resetAnimation();activePointerId=null;roomNumber=1;opening=createOpening(roomNumber);trampolineContact=false;restingTime=0;bounceSoundArmed=false;bounceAirTime=0;headOnBed=false;uprightSpinSpeed=0;painSpinSpeed=0;painTorque=0;painTorqueTarget=0;painNoiseTimer=0;health=100;hitFlash=0;simulationTime=0;lastDamageTime=-10;lastHits={};horizontalPosition=450;horizontalSpeed=0;facing=1;bodyAngle=0;armAngle=0;angularSpeed=0;gesture=null;y=surface-180;velocity=0;best=180;bounceHeight=180;pumped=false;squish=0;lastPump=-10;feedbackTime=2;ui.feedback.textContent='Mouse: move to steer, click to jump. Touch: hold, then release.';}
+// Each room shrinks the opening by 5%; wall doors retain their extra height.
 function createOpening(room){
  const side=['left','right','ceiling'][Math.min(2,Math.floor(Math.random()*3))];
- const size=(220*Math.pow(.9,room-1))*(side==='ceiling'?1:1.3);
+ const size=(220*Math.pow(.95,room-1))*(side==='ceiling'?1:1.3);
  const low=side==='ceiling'?100:150,high=side==='ceiling'?800:550;
  const start=low+Math.random()*(high-low-size);
  return {side,start,end:start+size,size,progress:0};
@@ -35,7 +35,8 @@ function createOpening(room){
 function fitsOpening(g,side){
  if(opening.side!==side||(opening.progress??1)<.05)return false;
  const gap=doorGap();
- return side==='ceiling'?g.left>=gap.start&&g.right<=gap.end:g.torso.y>=gap.start&&g.torso.y<=gap.end;
+ // Torso-based ceiling clearance lets the head and limbs graze the doorway.
+ return side==='ceiling'?g.torso.x>=gap.start-P.ceilingExitMargin&&g.torso.x<=gap.end+P.ceilingExitMargin:g.torso.y>=gap.start&&g.torso.y<=gap.end;
 }
 function nextRoom(exitSide=opening.side){
  updateRoundClock();if(roundOver)return;
@@ -51,7 +52,7 @@ function nextRoom(exitSide=opening.side){
   if(previous.left<52)horizontalPosition+=52-previous.left;
   else if(previous.right>848)horizontalPosition-=previous.right-848;
  }
- trampolineContact=bedState().depth>0;headOnBed=false;
+ trampolineContact=bedState().depth>0;restingTime=0;headOnBed=false;
  bounceSoundArmed=false;bounceAirTime=trampolineContact?0:.06;
  lastHits={};bounceHeight=Math.max(0,surface-y);
  message(`Room ${roomNumber}! Keep going!`);feedbackTime=3;
@@ -141,15 +142,15 @@ function updateRoomTransition(dt){
 function passedOpening(g){
  return (fitsOpening(g,'left')&&g.torso.x<=40)||
   (fitsOpening(g,'right')&&g.torso.x>=860)||
-  (fitsOpening(g,'ceiling')&&g.bottom<85);
+  (fitsOpening(g,'ceiling')&&g.torso.y<=85);
 }
 function resize(){width=innerWidth;height=innerHeight;const dpr=Math.min(devicePixelRatio||1,2);canvas.width=width*dpr;canvas.height=height*dpr;scale=Math.min(width/900,height/820);ox=(width-900*scale)/2;oy=(height-820*scale)/2;ctx.setTransform(dpr,0,0,dpr,0,0);}
 function message(text,color='#bde68a'){ui.feedback.textContent=text;ui.feedback.style.color=color;feedbackTime=1.7;}
-// Higher timingTolerance accepts clicks farther from the deepest stretch.
+// Higher timingTolerance accepts releases farther from the deepest stretch.
 function timingScore(){return Math.exp(-Math.pow(velocity/P.timingTolerance,2))*Math.min(bedState().depth/24,1);}
-// Pain adds random rotation; deliberate clicks and swipes keep full strength.
+// Pain adds random rotation; deliberate jumps and steering keep full strength.
 function pump(){if(!startRound()||roomTransition)return;const now=performance.now()/1000;if(now-lastPump<.22)return;lastPump=now;squish=1;
- if(bedState().depth<=0){message('Click when the trampoline stretches.','#d4b987');return;}
+ if(bedState().depth<=0){message('Click or lift when the trampoline stretches.','#d4b987');return;}
  // A settled player can always start a fresh jump, even after a spent push.
  if(Math.abs(velocity)<60&&Math.abs(bedState().depth-P.gravity/P.spring)<12){velocity=-P.pump;pumped=true;bounceSoundArmed=true;message('Jump!');return;}
  if(pumped){message('One push per bounce.','#d4b987');return;}pumped=true;
@@ -171,7 +172,7 @@ function characterPose(){
  const pivot=y-48+crouch*20,{bend,lag,tuck,recoil}=animation;
  const hip=pivot+tuck*14+recoil*5;
  const shoulder=hip-39+tuck*12+recoil*9,shoulderX=3+bend*.55;
- return {pivot,hip,shoulder,shoulderX,head:shoulder-(P.headRadius+9)+recoil*5,headX:5+bend*.3,
+ return {pivot,hip,shoulder,shoulderX,head:shoulder-(P.headRadius+3)+recoil,headX:5+bend*.3,
  nearKnee:[-4-crouch*12-tuck*20+lag*.65,y-26+tuck*13],
  farKnee:[6.5+crouch*9+tuck*14+lag*.4,y-26+tuck*10]};
 }
@@ -189,6 +190,19 @@ function geometry(){
 function bedState(){
  const g=geometry();
  return {depth:Math.max(0,g.bottom-surface),position:Math.max(50,Math.min(850,g.supportX))};
+}
+function applyRestFriction(dt){
+ const depth=bedState().depth;
+ // Measure spring energy around the loaded resting depth. Low vertical speed
+ // alone would mistake the deepest stretch of a big bounce for resting.
+ const offset=depth-P.gravity/P.spring;
+ const energy=velocity*velocity+P.spring*offset*offset;
+ if(depth<=0||energy>=P.restSpeed*P.restSpeed){restingTime=0;return;}
+ restingTime+=dt;
+ if(restingTime<P.restDelay)return;
+ const strength=1-energy/(P.restSpeed*P.restSpeed);
+ horizontalSpeed*=Math.exp(-P.restFriction*strength*dt);
+ if(Math.abs(horizontalSpeed)<1)horizontalSpeed=0;
 }
 function bedHeight(px,position=bedState().position,depth=bedState().depth){
  const t=Math.max(0,Math.min(1,px<=position?(px-40)/(position-40):(860-px)/(860-position)));
@@ -214,21 +228,21 @@ function resolveCollisions(){
  let g=geometry();
  if(passedOpening(g)){beginRoomTransition(opening.side);return;}
  if(g.left<40&&!fitsOpening(g,'left')){
-  if(g.head.x-P.headRadius<=43){headImpact('Left wall',1,0);angularSpeed*=.65;painSpinSpeed*=.65;}
+  if(g.head.x-P.headRadius<=43){headImpact('Left wall',1,0);angularSpeed*=.65;painSpinSpeed*=.65;uprightSpinSpeed*=.65;}
   horizontalPosition+=40-g.left;horizontalSpeed=Math.abs(horizontalSpeed);g=geometry();
  }
  if(g.right>860&&!fitsOpening(g,'right')){
-  if(g.head.x+P.headRadius>=857){headImpact('Right wall',-1,0);angularSpeed*=.65;painSpinSpeed*=.65;}
+  if(g.head.x+P.headRadius>=857){headImpact('Right wall',-1,0);angularSpeed*=.65;painSpinSpeed*=.65;uprightSpinSpeed*=.65;}
   horizontalPosition-=g.right-860;horizontalSpeed=-Math.abs(horizontalSpeed);g=geometry();
  }
  if(g.top<85&&!fitsOpening(g,'ceiling')){
-  if(g.head.y-P.headRadius<=88){headImpact('Ceiling',0,1);angularSpeed*=.65;painSpinSpeed*=.65;}
+  if(g.head.y-P.headRadius<=88){headImpact('Ceiling',0,1);angularSpeed*=.65;painSpinSpeed*=.65;uprightSpinSpeed*=.65;}
   y+=85-g.top;velocity=Math.max(150,Math.abs(velocity)*.85);g=geometry();
  }
  // Head landings share the spring response with every other pose.
  // Count one pain event per contact, rather than reflecting off a rigid bed.
  const touchingHead=g.head.y+P.headRadius>=bedHeight(g.head.x)-.5;
- if(touchingHead&&!headOnBed&&velocity>0){headImpact('Trampoline',0,-1,.5);angularSpeed*=.7;painSpinSpeed*=.7;}
+ if(touchingHead&&!headOnBed&&velocity>0){headImpact('Trampoline',0,-1,.5);angularSpeed*=.7;painSpinSpeed*=.7;uprightSpinSpeed*=.7;}
  headOnBed=touchingHead;
 }
 function steeringAxis(){
@@ -239,7 +253,15 @@ function steeringAxis(){
 function updateRotationControl(dt){
  if(!gesture)return;
  // Pointer position sets deliberate speed; pain-driven spin stays additive.
- angularSpeed=Math.max(-8,Math.min(8,steeringAxis()*P.pointerRotationSpeed+painSpinSpeed));
+ angularSpeed=Math.max(-8,Math.min(8,steeringAxis()*P.pointerRotationSpeed+painSpinSpeed+uprightSpinSpeed));
+}
+function updateUprightRotation(dt){
+ // A weak, damped angular spring takes the shortest path back to upright.
+ // Keep its speed separate so mouse/touch speed control does not erase it.
+ const previousAssist=uprightSpinSpeed;
+ uprightSpinSpeed=(uprightSpinSpeed-P.uprightTorque*Math.sin(bodyAngle)*dt)*Math.exp(-P.uprightDamping*dt);
+ uprightSpinSpeed=Math.max(-P.uprightMaxSpeed,Math.min(P.uprightMaxSpeed,uprightSpinSpeed));
+ angularSpeed=Math.max(-8,Math.min(8,angularSpeed+uprightSpinSpeed-previousAssist));
 }
 function updatePainRotation(dt){
  const painFraction=Math.max(0,Math.min(1,(100-health)/100));
@@ -277,11 +299,13 @@ function step(dt){
  const recoveryDt=Math.min(dt,Math.max(0,simulationTime-lastDamageTime-P.recoveryDelay));
  health=100-(100-health)*Math.exp(-P.recoveryRate*recoveryDt);
  hitFlash=Math.max(0,hitFlash-dt);
+ applyRestFriction(dt);
  horizontalPosition+=horizontalSpeed*dt;
  // Exaggerated cartoon counter-rotation: lighter arms windmill against the torso.
  updateRotationControl(dt);
  updatePainRotation(dt);
- angularSpeed*=Math.exp(-P.spinDamping*dt);painSpinSpeed*=Math.exp(-P.spinDamping*dt);
+ updateUprightRotation(dt);
+ angularSpeed*=Math.exp(-P.spinDamping*dt);painSpinSpeed*=Math.exp(-P.spinDamping*dt);uprightSpinSpeed*=Math.exp(-P.spinDamping*dt);
  bodyAngle=(bodyAngle+angularSpeed*dt)%(Math.PI*2);
  armAngle=(armAngle-angularSpeed*4.4*dt)%(Math.PI*2);
  if(bedState().depth>0&&Math.abs(velocity)<25&&Math.abs(bedState().depth-P.gravity/P.spring)<8)pumped=false;
@@ -465,13 +489,14 @@ function drawCharacter(cx,depth){
  const nearKnee=[cx+pose.nearKnee[0],pose.nearKnee[1]];
  line([[cx,hip],farKnee,[cx+13,y-2]],back,3.4);
  line([[cx,hip],nearKnee,[cx-8,y-2]],ink,4);
- line([[cx-8,y-2],[cx-2,y-1]],ink,3);
- line([[cx+13,y-2],[cx+19,y-1]],back,2.6);
+ const toeDirection=faceSign();
+ line([[cx-8,y-2],[cx-8+6*toeDirection,y-1]],ink,3);
+ line([[cx+13,y-2],[cx+13+6*toeDirection,y-1]],back,2.6);
  // Curved spine and neck make the fixed head and shoulder anchors feel elastic.
  curve([cx,hip],[cx+bend*1.25+recoil*14,hip-14],[cx+shoulderX,shoulder],ink,4);
- curve([cx+shoulderX,shoulder],[cx+headX+bend*.7-recoil*9,shoulder-10],[cx+headX,head+P.headRadius],ink,3);
+ curve([cx+shoulderX,shoulder],[cx+headX+bend*.1-recoil*2,shoulder-1.5],[cx+headX,head+P.headRadius],ink,3);
  // Counter-rotating arms have separately folding elbows and trailing wrists.
- ctx.save();ctx.translate(cx+shoulderX,shoulder+7);ctx.rotate((ending?0:armAngle)-bodyAngle);
+ ctx.save();ctx.translate(cx+shoulderX,shoulder+1);ctx.rotate((ending?0:armAngle)-bodyAngle);
  const flail=pain*Math.sin(simulationTime*18)*.7;
  const arm=(side,color)=>{
   let upper=side*(.5+tuck*.8)+lag*.035+Math.sin(simulationTime*4)*.12+flail;
@@ -616,38 +641,37 @@ function draw(){ctx.clearRect(0,0,width,height);ctx.save();ctx.translate(ox,oy);
  ui.height.textContent=(bounceHeight/100).toFixed(1)+' m';ui.best.textContent=(best/100).toFixed(1)+' m';const ready=depth>0&&!pumped&&timingScore()>.2;
  ui.phase.textContent=depth>0?(ready?'PUSH NOW':velocity>0?'STRETCHING':'SPRINGING BACK'):velocity>0?'FALLING':'RISING';ui.phase.style.color=ready?'#bde68a':'#8ea18f';ui.meter.style.width=Math.min(100,depth)+'%';ui.feedback.style.opacity=feedbackTime>0?'1':'0';}
 function frame(time){updateRoundClock();if(!previous)previous=time;accumulator+=Math.min((time-previous)/1000,.05);previous=time;while(accumulator>=P.step){step(P.step);accumulator-=P.step;}draw();requestAnimationFrame(frame);}
-// Mouse hover steers continuously. First touch steers; a second touch jumps.
-function clearSteering(){gesture=null;touchPointers.clear();steeringTouchId=null;}
-function selectTouchSteering(){
- if(!touchPointers.has(steeringTouchId))steeringTouchId=touchPointers.keys().next().value??null;
- const pointer=touchPointers.get(steeringTouchId);
- gesture=pointer?{kind:'touch',x:pointer.x}:null;
+// Mouse: hover to steer, press to jump. Touch: hold to steer, release to jump.
+function clearSteering(){
+ if(gesture)angularSpeed=Math.max(-8,Math.min(8,painSpinSpeed+uprightSpinSpeed));
+ gesture=null;activePointerId=null;
 }
 canvas.addEventListener('pointerdown',e=>{
- if(!startRound())return;
  if(e.pointerType==='mouse'){
-  if(touchPointers.size||e.button!==0)return;
+  if(activePointerId!==null||e.button!==0||!startRound())return;
   e.preventDefault();gesture={kind:'mouse',x:e.clientX};pump();return;
  }
+ if(activePointerId!==null||!startRound())return;
  e.preventDefault();canvas.setPointerCapture(e.pointerId);
- touchPointers.set(e.pointerId,{x:e.clientX});
- if(steeringTouchId===null){steeringTouchId=e.pointerId;selectTouchSteering();}
- else if(touchPointers.size===2)pump();
+ activePointerId=e.pointerId;gesture={kind:e.pointerType,x:e.clientX};
 });
 canvas.addEventListener('pointermove',e=>{
- if(!startRound())return;
  if(e.pointerType==='mouse'){
-  if(!touchPointers.size)gesture={kind:'mouse',x:e.clientX};return;
+  if(activePointerId===null&&startRound())gesture={kind:'mouse',x:e.clientX};
+  return;
  }
- if(!touchPointers.has(e.pointerId))return;
- e.preventDefault();touchPointers.set(e.pointerId,{x:e.clientX});selectTouchSteering();
+ if(e.pointerId!==activePointerId)return;
+ e.preventDefault();gesture.x=e.clientX;
 });
-function releaseTouch(e){
- if(e.pointerType==='mouse'||!touchPointers.has(e.pointerId))return;
- touchPointers.delete(e.pointerId);selectTouchSteering();
-}
-for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,releaseTouch);
-canvas.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&gesture?.kind==='mouse')gesture=null;});
+canvas.addEventListener('pointerup',e=>{
+ if(e.pointerType==='mouse'||e.pointerId!==activePointerId)return;
+ e.preventDefault();clearSteering();pump();
+});
+// Interrupted gestures should never cause an accidental jump.
+for(const event of ['pointercancel','lostpointercapture'])canvas.addEventListener(event,e=>{
+ if(e.pointerId===activePointerId)clearSteering();
+});
+canvas.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&gesture?.kind==='mouse')clearSteering();});
 addEventListener('blur',clearSteering);
 addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();if(!e.repeat)pump();}if(e.code==='KeyR')reset();});document.getElementById('reset').addEventListener('click',reset);document.getElementById('playAgain').addEventListener('click',()=>{reset();startRound();});addEventListener('resize',resize);document.addEventListener('visibilitychange',()=>{previous=0;accumulator=0;clearSteering();});reset();resize();requestAnimationFrame(frame);
 
